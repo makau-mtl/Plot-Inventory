@@ -7,9 +7,7 @@ if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error('Missing Supabase env vars. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in .env');
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-  auth: { persistSession: false },
-});
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 export type PlotStatus = 'AVAILABLE' | 'RESERVED' | 'SOLD';
 
@@ -46,6 +44,8 @@ export interface Lead {
   location?: string | null;
   created_at?: string;
 }
+
+export type LeadSocialProof = Pick<Lead, 'project_id' | 'plot_number' | 'name' | 'location' | 'created_at'>;
 
 export type LeadStage = 'NEW' | 'CONTACTED' | 'RESERVED' | 'SOLD';
 

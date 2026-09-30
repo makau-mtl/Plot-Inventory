@@ -1,9 +1,9 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
   MapPin, Phone, ArrowLeft, Building2, BadgeCheck, FileText, Map as MapIcon,
-  Navigation, Droplets, Star, Play, Eye, ChevronRight,
+  Navigation, Droplets, Star, Play, Eye,
 } from 'lucide-react';
-import { supabase, Project, Plot, Lead } from '@/lib/supabase';
+import { supabase, Project, Plot, LeadSocialProof } from '@/lib/supabase';
 import { PlotMap, Legend } from '@/components/PlotMap';
 import { PlotDetailModal } from '@/components/PlotDetailModal';
 import { Lightbox } from '@/components/Lightbox';
@@ -59,7 +59,7 @@ const DOCS = [
 export function PublicProjectPage({ projectId }: Props) {
   const [project, setProject] = useState<Project | null>(null);
   const [plots, setPlots] = useState<Plot[]>([]);
-  const [leads, setLeads] = useState<Lead[]>([]);
+  const [leads, setLeads] = useState<LeadSocialProof[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedPlot, setSelectedPlot] = useState<Plot | null>(null);
@@ -69,11 +69,11 @@ export function PublicProjectPage({ projectId }: Props) {
     const [{ data: proj }, { data: plotData }, { data: leadData }] = await Promise.all([
       supabase.from('projects').select('*').eq('id', projectId).maybeSingle(),
       supabase.from('plots').select('*').eq('project_id', projectId).order('plot_number'),
-      supabase.from('leads').select('*').eq('project_id', projectId).order('created_at', { ascending: false }),
+      supabase.from('public_lead_social_proof').select('*').eq('project_id', projectId).order('created_at', { ascending: false }),
     ]);
     setProject(proj as Project | null);
     setPlots((plotData as Plot[]) ?? []);
-    setLeads((leadData as Lead[]) ?? []);
+    setLeads((leadData as LeadSocialProof[]) ?? []);
     if (!proj) setError('Project not found');
   }, [projectId]);
 

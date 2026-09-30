@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
-import { MapPin, X } from 'lucide-react';
-import { Lead } from '@/lib/supabase';
+import { X } from 'lucide-react';
+import { LeadSocialProof } from '@/lib/supabase';
 
 interface SocialProofToastProps {
-  leads: Lead[];
+  leads: LeadSocialProof[];
 }
 
 export function SocialProofToast({ leads }: SocialProofToastProps) {

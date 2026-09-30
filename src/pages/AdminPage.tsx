@@ -1,25 +1,45 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, type FormEvent } from 'react';
 import {
   Lock, ArrowLeft, MapPin, Building2, Users, Phone, LogOut, ChevronRight,
-  ImagePlus, CheckCircle2, Table as TableIcon,
+  ImagePlus, CheckCircle2, Table as TableIcon, Plus, Pencil, Trash2, X, Loader2,
 } from 'lucide-react';
+import type { Session } from '@supabase/supabase-js';
 import { supabase, Project, Plot, Lead, PlotStatus, LeadStage, LEAD_STAGES, STATUS_COLORS } from '@/lib/supabase';
 import { PlotMap } from '@/components/PlotMap';
 import { navigate } from '@/lib/router';
 
-const ADMIN_PASSWORD = '1234';
-const STORAGE_KEY = 'miribo_admin_authed';
-const WHATSAPP_NUMBER = '254700000000';
+const STORAGE_BUCKET = 'plot-images';
+const ADMIN_ROLE = 'admin';
+
+type PlotValues = Pick<Plot,
+  'plot_number' | 'status' | 'price' | 'ha_label' | 'size_label' | 'is_corner' |
+  'buyer_name' | 'sold_at' | 'beacon_photo_url' | 'proof_image_url'
+>;
 
 interface AdminPageProps {
   projectId?: string;
 }
 
 export function AdminPage({ projectId }: AdminPageProps) {
-  const [authed, setAuthed] = useState(() => sessionStorage.getItem(STORAGE_KEY) === '1');
+  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
 
-  if (!authed) {
-    return <Login onSuccess={() => setAuthed(true)} />;
+  useEffect(() => {
+    const setSessionRole = (session: Session | null) => {
+      setIsAdmin(session?.user.app_metadata?.role === ADMIN_ROLE);
+    };
+    supabase.auth.getSession().then(({ data }) => setSessionRole(data.session));
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSessionRole(session);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  if (isAdmin === null) {
+    return <div className="min-h-screen flex items-center justify-center bg-stone-50"><Loader2 className="h-5 w-5 animate-spin text-stone-400" /></div>;
+  }
+
+  if (!isAdmin) {
+    return <Login />;
   }
 
   if (projectId) {
@@ -27,18 +47,12 @@ export function AdminPage({ projectId }: AdminPageProps) {
       <ProjectAdminLoader
         projectId={projectId}
         onBack={() => { window.location.hash = '/admin'; }}
-        onLogout={() => {
-          sessionStorage.removeItem(STORAGE_KEY);
-          setAuthed(false);
-        }}
+        onLogout={() => { void supabase.auth.signOut(); }}
       />
     );
   }
 
-  return <AdminDashboard onLogout={() => {
-    sessionStorage.removeItem(STORAGE_KEY);
-    setAuthed(false);
-  }} />;
+  return <AdminDashboard onLogout={() => { void supabase.auth.signOut(); }} />;
 }
 
 function ProjectAdminLoader({ projectId, onBack, onLogout }: { projectId: string; onBack: () => void; onLogout: () => void }) {
@@ -77,18 +91,24 @@ function ProjectAdminLoader({ projectId, onBack, onLogout }: { projectId: string
   return <ProjectAdmin project={project} onBack={onBack} onLogout={onLogout} />;
 }
 
-function Login({ onSuccess }: { onSuccess: () => void }) {
+function Login() {
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState(false);
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (password === ADMIN_PASSWORD) {
-      sessionStorage.setItem(STORAGE_KEY, '1');
-      onSuccess();
-    } else {
-      setError(true);
+    setSubmitting(true);
+    setError('');
+    const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+    if (signInError) {
+      setError(signInError.message);
+    } else if (data.user.app_metadata?.role !== ADMIN_ROLE) {
+      await supabase.auth.signOut();
+      setError('This account is not authorized as an administrator.');
     }
+    setSubmitting(false);
   };
 
   return (
@@ -99,31 +119,44 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
             <Lock className="h-6 w-6" />
           </div>
           <h1 className="text-xl font-bold text-stone-900">Miribo Admin</h1>
-          <p className="mt-1 text-sm text-stone-500">Enter password to manage plots</p>
+          <p className="mt-1 text-sm text-stone-500">Sign in to manage plots</p>
         </div>
 
         <div>
+          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-stone-500" htmlFor="admin-email">Email</label>
           <input
+            id="admin-email"
+            type="email"
+            autoComplete="username"
+            required
+            value={email}
+            onChange={(e) => { setEmail(e.target.value); setError(''); }}
+            placeholder="admin@example.com"
+            className="mb-3 w-full rounded-xl border-2 border-stone-200 px-4 py-3 outline-none transition focus:border-emerald-600"
+          />
+          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-stone-500" htmlFor="admin-password">Password</label>
+          <input
+            id="admin-password"
             type="password"
-            autoFocus
+            autoComplete="current-password"
+            required
             value={password}
             onChange={(e) => {
               setPassword(e.target.value);
-              setError(false);
+              setError('');
             }}
             placeholder="Password"
-            className={`w-full rounded-xl border-2 px-4 py-3.5 text-center text-lg font-medium tracking-widest outline-none transition ${
-              error ? 'border-red-400 bg-red-50' : 'border-stone-200 focus:border-emerald-600'
-            }`}
+            className={`w-full rounded-xl border-2 px-4 py-3.5 outline-none transition ${error ? 'border-red-400 bg-red-50' : 'border-stone-200 focus:border-emerald-600'}`}
           />
-          {error && <p className="mt-2 text-center text-sm text-red-500">Incorrect password</p>}
+          {error && <p className="mt-2 text-center text-sm text-red-500">{error}</p>}
         </div>
 
         <button
           type="submit"
-          className="w-full rounded-xl bg-stone-800 py-3.5 text-white font-semibold transition hover:bg-stone-700 active:scale-95"
+          disabled={submitting}
+          className="w-full rounded-xl bg-stone-800 py-3.5 text-white font-semibold transition hover:bg-stone-700 active:scale-95 disabled:opacity-60"
         >
-          Log in
+          {submitting ? 'Signing in…' : 'Log in'}
         </button>
       </form>
     </div>
@@ -207,6 +240,7 @@ function ProjectAdmin({ project, onBack, onLogout }: ProjectAdminProps) {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingPlot, setSavingPlot] = useState<string | null>(null);
+  const [editingPlot, setEditingPlot] = useState<Plot | null | 'new'>(null);
 
   const fetchAll = useCallback(async () => {
     const [{ data: plotData }, { data: leadData }] = await Promise.all([
@@ -264,9 +298,59 @@ function ProjectAdmin({ project, onBack, onLogout }: ProjectAdminProps) {
     await supabase.from('plots').update({ buyer_name: buyerName }).eq('id', plot.id);
   };
 
-  const updatePlotProofImage = async (plot: Plot, proofImageUrl: string) => {
-    setPlots((prev) => prev.map((p) => p.id === plot.id ? { ...p, proof_image_url: proofImageUrl } : p));
-    await supabase.from('plots').update({ proof_image_url: proofImageUrl }).eq('id', plot.id);
+  const savePlot = async (values: PlotValues) => {
+    const result = editingPlot === 'new'
+      ? await supabase.from('plots').insert({ ...values, project_id: project.id })
+      : await supabase.from('plots').update(values).eq('id', (editingPlot as Plot).id);
+    if (result.error) throw new Error(result.error.message);
+    await fetchAll();
+    setEditingPlot(null);
+  };
+
+  const deletePlot = async (plot: Plot) => {
+    if (!window.confirm(`Delete Plot ${plot.plot_number}? This cannot be undone.`)) return;
+    const { error } = await supabase.from('plots').delete().eq('id', plot.id);
+    if (error) {
+      window.alert(`Could not delete plot: ${error.message}`);
+      return;
+    }
+    setPlots((prev) => prev.filter((item) => item.id !== plot.id));
+    const imagePaths = [plot.beacon_photo_url, plot.proof_image_url]
+      .map(storageObjectPath)
+      .filter((path): path is string => path !== null);
+    if (imagePaths.length) await supabase.storage.from(STORAGE_BUCKET).remove(imagePaths);
+  };
+
+  const uploadPlotImage = async (plot: Plot, field: 'beacon_photo_url' | 'proof_image_url', file: File) => {
+    const acceptedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/avif'];
+    if (!acceptedTypes.includes(file.type) || file.size > 10 * 1024 * 1024) {
+      throw new Error('Choose a JPEG, PNG, WebP, or AVIF image no larger than 10 MB.');
+    }
+    const extension = file.name.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+    const objectPath = `${project.id}/${plot.id}/${field}-${crypto.randomUUID()}.${extension}`;
+    const { error: uploadError } = await supabase.storage.from(STORAGE_BUCKET).upload(objectPath, file, {
+      contentType: file.type,
+      upsert: false,
+    });
+    if (uploadError) throw new Error(uploadError.message);
+
+    const publicUrl = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(objectPath).data.publicUrl;
+    const { error: updateError } = await supabase.from('plots').update({ [field]: publicUrl }).eq('id', plot.id);
+    if (updateError) {
+      await supabase.storage.from(STORAGE_BUCKET).remove([objectPath]);
+      throw new Error(updateError.message);
+    }
+    setPlots((prev) => prev.map((item) => item.id === plot.id ? { ...item, [field]: publicUrl } : item));
+    const previousPath = storageObjectPath(plot[field]);
+    if (previousPath) await supabase.storage.from(STORAGE_BUCKET).remove([previousPath]);
+  };
+
+  const removePlotImage = async (plot: Plot, field: 'beacon_photo_url' | 'proof_image_url') => {
+    const { error } = await supabase.from('plots').update({ [field]: null }).eq('id', plot.id);
+    if (error) throw new Error(error.message);
+    setPlots((prev) => prev.map((item) => item.id === plot.id ? { ...item, [field]: null } : item));
+    const path = storageObjectPath(plot[field]);
+    if (path) await supabase.storage.from(STORAGE_BUCKET).remove([path]);
   };
 
   const updateLeadStage = async (lead: Lead, stage: LeadStage) => {
@@ -319,6 +403,12 @@ function ProjectAdmin({ project, onBack, onLogout }: ProjectAdminProps) {
           <div className="mb-4 flex items-center gap-2">
             <TableIcon className="h-5 w-5 text-stone-600" />
             <h2 className="text-lg font-bold text-stone-900">Plot Management</h2>
+            <button
+              onClick={() => setEditingPlot('new')}
+              className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800"
+            >
+              <Plus className="h-4 w-4" /> Add plot
+            </button>
           </div>
 
           {/* Desktop table */}
@@ -330,7 +420,9 @@ function ProjectAdmin({ project, onBack, onLogout }: ProjectAdminProps) {
                   <th className="py-2 pr-3">Status</th>
                   <th className="py-2 pr-3">Buyer Name</th>
                   <th className="py-2 pr-3">Proof Image</th>
+                  <th className="py-2 pr-3">Beacon Image</th>
                   <th className="py-2 pr-3">Price</th>
+                  <th className="py-2 pr-3">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-stone-100">
@@ -345,22 +437,30 @@ function ProjectAdmin({ project, onBack, onLogout }: ProjectAdminProps) {
                       />
                     </td>
                     <td className="py-2.5 pr-3">
-                      <input
-                        type="text"
-                        value={plot.buyer_name ?? ''}
-                        onChange={(e) => updatePlotBuyer(plot, e.target.value)}
-                        placeholder="—"
-                        className="w-full rounded-lg border border-stone-200 px-2 py-1.5 text-sm outline-none focus:border-emerald-500"
+                      <span className="text-stone-600">{plot.buyer_name || '—'}</span>
+                    </td>
+                    <td className="py-2.5 pr-3">
+                      <PlotImageUpload
+                        url={plot.proof_image_url}
+                        onUpload={(file) => uploadPlotImage(plot, 'proof_image_url', file)}
+                        onRemove={() => removePlotImage(plot, 'proof_image_url')}
                       />
                     </td>
                     <td className="py-2.5 pr-3">
-                      <ProofUpload
-                        url={plot.proof_image_url}
-                        onChange={(url) => updatePlotProofImage(plot, url)}
+                      <PlotImageUpload
+                        url={plot.beacon_photo_url}
+                        onUpload={(file) => uploadPlotImage(plot, 'beacon_photo_url', file)}
+                        onRemove={() => removePlotImage(plot, 'beacon_photo_url')}
                       />
                     </td>
                     <td className="py-2.5 pr-3 text-stone-600 tabular-nums">
                       KSh {Math.round(plot.price).toLocaleString()}
+                    </td>
+                    <td className="py-2.5 pr-3">
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => setEditingPlot(plot)} title="Edit plot" className="rounded p-1.5 text-stone-500 hover:bg-stone-100 hover:text-stone-900"><Pencil className="h-4 w-4" /></button>
+                        <button onClick={() => void deletePlot(plot)} title="Delete plot" className="rounded p-1.5 text-red-500 hover:bg-red-50"><Trash2 className="h-4 w-4" /></button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -387,26 +487,50 @@ function ProjectAdmin({ project, onBack, onLogout }: ProjectAdminProps) {
                   </div>
                   <div>
                     <label className="text-[10px] font-semibold uppercase text-stone-400">Buyer Name</label>
-                    <input
-                      type="text"
-                      value={plot.buyer_name ?? ''}
-                      onChange={(e) => updatePlotBuyer(plot, e.target.value)}
-                      placeholder="—"
-                      className="w-full rounded-lg border border-stone-200 px-3 py-2 text-sm outline-none focus:border-emerald-500"
-                    />
+                    <p className="text-sm text-stone-600">{plot.buyer_name || '—'}</p>
                   </div>
                   <div>
                     <label className="text-[10px] font-semibold uppercase text-stone-400">Proof Image</label>
-                    <ProofUpload
+                    <PlotImageUpload
                       url={plot.proof_image_url}
-                      onChange={(url) => updatePlotProofImage(plot, url)}
+                      onUpload={(file) => uploadPlotImage(plot, 'proof_image_url', file)}
+                      onRemove={() => removePlotImage(plot, 'proof_image_url')}
                     />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-semibold uppercase text-stone-400">Beacon image</label>
+                    <PlotImageUpload
+                      url={plot.beacon_photo_url}
+                      onUpload={(file) => uploadPlotImage(plot, 'beacon_photo_url', file)}
+                      onRemove={() => removePlotImage(plot, 'beacon_photo_url')}
+                    />
+                  </div>
+                  <div className="flex gap-2 pt-1">
+                    <button onClick={() => setEditingPlot(plot)} className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 px-3 py-2 text-sm font-semibold text-stone-700"><Pencil className="h-4 w-4" />Edit</button>
+                    <button onClick={() => void deletePlot(plot)} className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-2 text-sm font-semibold text-red-600"><Trash2 className="h-4 w-4" />Delete</button>
                   </div>
                 </div>
               </div>
             ))}
           </div>
         </div>
+
+        {editingPlot !== null && (
+          <PlotEditor
+            key={editingPlot === 'new' ? 'new' : editingPlot.id}
+            plot={editingPlot === 'new' ? null : editingPlot}
+            saving={savingPlot === 'editor'}
+            onCancel={() => setEditingPlot(null)}
+            onSave={async (values) => {
+              setSavingPlot('editor');
+              try {
+                await savePlot(values);
+              } finally {
+                setSavingPlot(null);
+              }
+            }}
+          />
+        )}
 
         {/* Leads table */}
         <div className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm sm:p-6">
@@ -556,41 +680,140 @@ function StageSelect({ value, onChange }: { value: LeadStage; onChange: (s: Lead
   );
 }
 
-function ProofUpload({ url, onChange }: { url?: string | null; onChange: (url: string) => void }) {
-  const [editing, setEditing] = useState(false);
-  const [input, setInput] = useState(url ?? '');
+function PlotEditor({ plot, saving, onCancel, onSave }: {
+  plot: Plot | null;
+  saving: boolean;
+  onCancel: () => void;
+  onSave: (values: PlotValues) => Promise<void>;
+}) {
+  const [plotNumber, setPlotNumber] = useState(plot ? String(plot.plot_number) : '');
+  const [status, setStatus] = useState<PlotStatus>(plot?.status ?? 'AVAILABLE');
+  const [price, setPrice] = useState(plot ? String(plot.price) : '');
+  const [haLabel, setHaLabel] = useState(plot?.ha_label ?? '');
+  const [sizeLabel, setSizeLabel] = useState(plot?.size_label ?? '');
+  const [isCorner, setIsCorner] = useState(plot?.is_corner ?? false);
+  const [buyerName, setBuyerName] = useState(plot?.buyer_name ?? '');
+  const [error, setError] = useState('');
 
-  if (url && !editing) {
-    return (
-      <div className="flex items-center gap-2">
-        <img src={url} alt="Proof" className="h-8 w-8 rounded object-cover border border-stone-200" />
-        <button onClick={() => { setInput(url); setEditing(true); }} className="text-xs text-emerald-600 hover:underline">
-          Change
-        </button>
-      </div>
-    );
-  }
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setError('');
+    try {
+      await onSave({
+        plot_number: Number(plotNumber),
+        status,
+        price: Number(price),
+        ha_label: haLabel.trim(),
+        size_label: sizeLabel.trim(),
+        is_corner: isCorner,
+        buyer_name: buyerName.trim() || null,
+        sold_at: status === 'SOLD' ? plot?.sold_at ?? new Date().toISOString() : null,
+        beacon_photo_url: plot?.beacon_photo_url ?? null,
+        proof_image_url: plot?.proof_image_url ?? null,
+      });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not save the plot.');
+    }
+  };
 
+  const fieldClass = 'w-full rounded-lg border border-stone-300 px-3 py-2.5 text-sm outline-none focus:border-emerald-600';
   return (
-    <div className="flex items-center gap-1.5">
-      <input
-        type="url"
-        value={input}
-        onChange={(e) => setInput(e.target.value)}
-        placeholder="Paste image URL"
-        className="w-full min-w-[120px] rounded-lg border border-stone-200 px-2 py-1.5 text-xs outline-none focus:border-emerald-500"
-      />
-      <button
-        onClick={() => { onChange(input); setEditing(false); }}
-        className="shrink-0 flex items-center gap-1 rounded-lg bg-emerald-600 px-2 py-1.5 text-xs font-semibold text-white"
-      >
-        <ImagePlus className="h-3.5 w-3.5" />
-      </button>
-      {url && (
-        <button onClick={() => setEditing(false)} className="shrink-0 text-xs text-stone-400">
-          Cancel
-        </button>
-      )}
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-4" onMouseDown={onCancel}>
+      <form onSubmit={submit} onMouseDown={(event) => event.stopPropagation()} className="w-full max-w-lg space-y-4 rounded-xl bg-white p-5 shadow-2xl sm:p-6">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold text-stone-900">{plot ? `Edit Plot ${plot.plot_number}` : 'Add plot'}</h2>
+          <button type="button" onClick={onCancel} aria-label="Close" className="rounded p-1 text-stone-500 hover:bg-stone-100"><X className="h-5 w-5" /></button>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <label className="space-y-1 text-xs font-semibold text-stone-600">Plot number
+            <input className={fieldClass} type="number" min="1" step="1" required value={plotNumber} onChange={(event) => setPlotNumber(event.target.value)} />
+          </label>
+          <label className="space-y-1 text-xs font-semibold text-stone-600">Price (KSh)
+            <input className={fieldClass} type="number" min="0" step="0.01" required value={price} onChange={(event) => setPrice(event.target.value)} />
+          </label>
+          <label className="space-y-1 text-xs font-semibold text-stone-600">Status
+            <select className={fieldClass} value={status} onChange={(event) => setStatus(event.target.value as PlotStatus)}>
+              <option value="AVAILABLE">Available</option><option value="RESERVED">Reserved</option><option value="SOLD">Sold</option>
+            </select>
+          </label>
+          <label className="space-y-1 text-xs font-semibold text-stone-600">Size label
+            <input className={fieldClass} value={sizeLabel} onChange={(event) => setSizeLabel(event.target.value)} />
+          </label>
+          <label className="space-y-1 text-xs font-semibold text-stone-600">Hectare label
+            <input className={fieldClass} value={haLabel} onChange={(event) => setHaLabel(event.target.value)} />
+          </label>
+          <label className="space-y-1 text-xs font-semibold text-stone-600">Buyer name
+            <input className={fieldClass} value={buyerName} onChange={(event) => setBuyerName(event.target.value)} />
+          </label>
+        </div>
+        <label className="flex items-center gap-2 text-sm font-medium text-stone-700">
+          <input type="checkbox" checked={isCorner} onChange={(event) => setIsCorner(event.target.checked)} className="h-4 w-4 accent-emerald-700" />
+          Corner plot
+        </label>
+        {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+        <div className="flex justify-end gap-2 border-t border-stone-100 pt-3">
+          <button type="button" onClick={onCancel} className="rounded-lg border border-stone-300 px-4 py-2 text-sm font-semibold text-stone-700">Cancel</button>
+          <button type="submit" disabled={saving} className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />}{saving ? 'Saving…' : 'Save plot'}
+          </button>
+        </div>
+      </form>
     </div>
   );
+}
+
+function PlotImageUpload({ url, onUpload, onRemove }: {
+  url?: string | null;
+  onUpload: (file: File) => Promise<void>;
+  onRemove: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleFile = async (file?: File) => {
+    if (!file) return;
+    setBusy(true);
+    setError('');
+    try {
+      await onUpload(file);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Image upload failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRemove = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      await onRemove();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not remove image.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex min-w-[125px] flex-col gap-1">
+      <div className="flex items-center gap-2">
+        {url && <img src={url} alt="Plot image" className="h-9 w-9 rounded border border-stone-200 object-cover" />}
+        <label className={`inline-flex cursor-pointer items-center gap-1 rounded-md border border-stone-200 px-2 py-1.5 text-xs font-semibold text-stone-700 hover:bg-stone-50 ${busy ? 'pointer-events-none opacity-50' : ''}`}>
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImagePlus className="h-3.5 w-3.5" />}
+          {url ? 'Change' : 'Upload'}
+          <input type="file" accept="image/jpeg,image/png,image/webp,image/avif" disabled={busy} className="sr-only" onChange={(event) => { void handleFile(event.target.files?.[0]); event.currentTarget.value = ''; }} />
+        </label>
+        {url && <button type="button" disabled={busy} onClick={() => void handleRemove()} title="Remove image" className="rounded p-1 text-stone-400 hover:bg-red-50 hover:text-red-600"><X className="h-4 w-4" /></button>}
+      </div>
+      {error && <span className="max-w-[160px] text-[10px] text-red-600">{error}</span>}
+    </div>
+  );
+}
+
+function storageObjectPath(url?: string | null): string | null {
+  if (!url) return null;
+  const marker = `/storage/v1/object/public/${STORAGE_BUCKET}/`;
+  const index = url.indexOf(marker);
+  return index === -1 ? null : decodeURIComponent(url.slice(index + marker.length));
 }
